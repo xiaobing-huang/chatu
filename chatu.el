@@ -98,6 +98,8 @@
 (declare-function markdown-display-inline-images "ext:markdown-mode.el")
 (declare-function markdown-follow-thing-at-point "ext:markdown-mode.el")
 (declare-function org-redisplay-inline-images "org.el")
+(declare-function org-attach-dir "org-attach.el")
+(declare-function org-entry-get "org.el")
 
 (defvar org-ctrl-c-ctrl-c-hook)
 (defvar markdown-mode-map)
@@ -125,8 +127,9 @@
   :type 'string)
 
 (defcustom chatu-dir-regex
-  "\"\\([\u4e00-\u9fa5:~ \\/a-z_\s0-9\\.-]+\\)\""
-  "Define regex of directry. Currently support Chinese charaters."
+  "\\(\"[\u4e00-\u9fa5:~ \\/a-z_\s0-9\\.-]+\"\\|'attach\\)"
+  "Define regex of directry.
+Currently support Chinese charaters and `attach' keyword."
   :group 'chatu
   :type 'string)
 
@@ -167,18 +170,18 @@
 (defun chatu-get-input (line)
   "Get chatu input file from string LINE."
   (when (string-match
-           (concat ":\\w* +" chatu-file-regex) line)
-      (list :input
-            (substring-no-properties
-             (match-string 1 line)))))
+         (concat ":\\w* +" chatu-file-regex) line)
+    (list :input
+          (substring-no-properties
+           (match-string 1 line)))))
 
 (defun chatu-get-output (line)
   "Get chatu output file from string LINE."
   (when (string-match
-           (concat ":output +" chatu-file-regex) line)
-      (list :output
-            (substring-no-properties
-             (match-string 1 line)))))
+         (concat ":output +" chatu-file-regex) line)
+    (list :output
+          (substring-no-properties
+           (match-string 1 line)))))
 
 (defun chatu-get-output-ext (line)
   "Get chatu output file extension from string LINE."
@@ -189,20 +192,43 @@
            (match-string 1 line)))))
 
 (defun chatu-get-input-dir (line)
-  "Get chatu output directory from string LINE."
-  (when (string-match
-           (concat ":input-dir +" chatu-dir-regex) line)
-      (list :input-dir
-            (substring-no-properties
-             (match-string 1 line)))))
+  "Get chatu input directory from string LINE.
+Special keyword `attach' will resolve to org-attach directory."
+  (if (string-match
+         (concat ":input-dir +" chatu-dir-regex) line)
+    (let ((dir-value (substring-no-properties (match-string 1 line))))
+      ;; Remove quotes if present
+      (setq dir-value (string-trim dir-value "\"" "\""))
+      (when (string= dir-value "'attach")
+        (setq dir-value
+              (or (org-attach-dir t)
+                  (error "Cannot resolve 'attach': not in an org entry with ID"))))
+      (list :input-dir dir-value))
+    (list :input-dir (org-attach-dir t))))
 
 (defun chatu-get-output-dir (line)
-  "Get chatu input directory from string LINE."
-  (when (string-match
-           (concat ":output-dir +" chatu-dir-regex) line)
-      (list :output-dir
-            (substring-no-properties
-             (match-string 1 line)))))
+  "Get chatu output directory from string LINE.
+Special keyword `attach' will resolve to org-attach directory."
+  (if (string-match
+         (concat ":output-dir +" chatu-dir-regex) line)
+    (let ((dir-value (substring-no-properties (match-string 1 line))))
+      ;; Remove quotes if present
+      (setq dir-value (string-trim dir-value "\"" "\""))
+      (when (string= dir-value "'attach")
+        (setq dir-value
+              (org-attach-dir)))
+      (list :output-dir (or dir-value
+                            (org-attach-dir))))
+    (list :output-dir (org-attach-dir))))
+
+(defun chatu-get-output-dir-method (line)
+  "Get chatu output directory from string LINE.
+Special keyword `attach' will resolve to org-attach directory."
+  (if (string-match
+         (concat ":output-dir +" chatu-dir-regex) line)
+    (let ((dir-method (substring-no-properties (match-string 1 line))))
+      (list :output-dir-method (or dir-method "'attach")))
+    (list :output-dir-method "'attach")))
 
 (defun chatu-get-page (line)
   "Get chatu output page from string LINE."
@@ -219,56 +245,70 @@
            (match-string 1 line)))))
 
 (defvar chatu-keyword-value-functions
-      '(chatu-get-keyword
-        chatu-get-settings
-        chatu-get-type
-        chatu-get-input
-        chatu-get-output
-        chatu-get-page
-        chatu-get-input-dir
-        chatu-get-output-dir
-        chatu-get-script
-        chatu-get-output-ext))
+  '(chatu-get-keyword
+    chatu-get-settings
+    chatu-get-type
+    chatu-get-input
+    chatu-get-output
+    chatu-get-page
+    chatu-get-input-dir
+    chatu-get-output-dir
+    chatu-get-output-dir-method
+    chatu-get-script
+    chatu-get-output-ext))
 
 (defun chatu-normalize-keyword-plist (keyword-plist)
-  "Normalize KEYWORD-PLIST."
+  "Normalize KEYWORD-PLIST.
+Resolves `attach' keyword in directory specifications to org-attach directory."
   (when (plist-get keyword-plist :chatu)
-      (let* ((input (plist-get keyword-plist :input))
-             (input-dir (or (plist-get keyword-plist :input-dir)
-                            ;; if input already contains parent folder
-                            ;; ignore `chatu-input-dir'
-                            (if (file-name-directory input)
-                                nil
-                              chatu-input-dir)))
-             (_ (plist-put keyword-plist :input-path
-                           (if input-dir
-                               (concat input-dir "/" input)
-                             input)))
-             (output-ext (or (plist-get keyword-plist :output-ext)
-                             chatu-output-ext))
-             (_ (plist-put keyword-plist :output-ext output-ext))
-             (output (plist-get keyword-plist :output))
-             (output-dir (or (plist-get keyword-plist :output-dir)
-                            ;; if output already contains parent folder
-                            ;; ignore `chatu-output-dir'
-                             (if (and output (file-name-directory output))
-                                 nil
-                               chatu-output-dir)))
-             (page (plist-get keyword-plist :page))
-             (output (or output
-                         (if page
-                             (concat (file-name-sans-extension
-                                      ;; remove input's parent folder
-                                      (file-name-base input))
-                                     "-" page "." output-ext)
-                           (file-name-with-extension
-                            (file-name-base input)
-                            output-ext))))
-             (_ (plist-put keyword-plist :output-path
-                           (if output-dir
-                               (concat output-dir "/" output)
-                             output))))
-        keyword-plist)))
+    (let* ((input (plist-get keyword-plist :input))
+           ;; Resolve input-dir, handling 'attach' keyword
+           (input-dir-raw (plist-get keyword-plist :input-dir))
+           (input-dir (cond
+                       ;; If 'attach' is specified, resolve to org-attach directory
+                       ((and input-dir-raw (string= input-dir-raw "attach"))
+                        (or (org-attach-dir t)
+                            (error "Cannot resolve 'attach': not in an org entry with ID")))
+                       ;; Use explicit input-dir if provided
+                       (input-dir-raw input-dir-raw)
+                       ;; if input already contains parent folder
+                       ;; ignore `chatu-input-dir'
+                       ((file-name-directory input) nil)
+                       ;; Fall back to default
+                       (t chatu-input-dir)))
+           (_ (plist-put keyword-plist :input-path
+                         (if input-dir
+                             (concat input-dir "/" input)
+                           input)))
+           (output-ext (or (plist-get keyword-plist :output-ext)
+                           chatu-output-ext))
+           (_ (plist-put keyword-plist :output-ext output-ext))
+           (output (plist-get keyword-plist :output))
+           ;; Resolve output-dir, handling 'attach' keyword
+           (output-dir-raw (plist-get keyword-plist :output-dir))
+           (output-dir (cond
+                        ;; Use explicit output-dir if provided
+                        (output-dir-raw output-dir-raw)
+                        ;; if output already contains parent folder
+                        ;; ignore `chatu-output-dir'
+                        ((and output (file-name-directory output)) nil)
+                        ;; Fall back to default
+                        (t chatu-output-dir)))
+           (page (plist-get keyword-plist :page))
+           (output (or output
+                       (if page
+                           (concat (file-name-sans-extension
+                                    ;; remove input's parent folder
+                                    (file-name-base input))
+                                   "-" page "." output-ext)
+                         (file-name-with-extension
+                          (file-name-base input)
+                          output-ext))))
+           (_ (plist-put keyword-plist :output-path
+                         (if (and output-dir (not (string-empty-p output-dir)))
+                             (concat output-dir "/" output)
+                           output))))
+      keyword-plist)))
 
 (defun chatu-keyword-plist ()
   "Get normalized KEYWORD-PLIST from string line."
@@ -288,12 +328,14 @@
    ((derived-mode-p 'org-mode)
     (org-redisplay-inline-images))))
 
-(defun chatu-insert-image (path)
+(defun chatu-insert-image (path dir-method)
   "Insert image string PATH for different major mode."
   (cond ((derived-mode-p 'markdown-mode)
          (insert "![](" path ")"))
         ((derived-mode-p 'org-mode)
-         (insert "[[file:" path "]]"))))
+         (if (string= dir-method "'attach")
+             (insert "[[attachment:" (file-name-nondirectory path) "]]" )
+           (insert "[[file:" path "]]")))))
 
 (defun chatu-img-pre ()
   "Get image string prefix for different major mode."
@@ -347,6 +389,7 @@
            ;; working. remove it.
            (script (string-replace "\\~" "~" script))
            (result (plist-get keyword-plist :output-path))
+           (dir-method (plist-get keyword-plist :output-dir-method))
            (result-dir (file-name-directory result))
            (space-count (string-search
                          (cond ((derived-mode-p 'markdown-mode)
@@ -357,7 +400,7 @@
                          (buffer-substring
                           (line-beginning-position)
                           (line-end-position)))))
-           ;; ensure output-dir exists.
+      ;; ensure output-dir exists.
       (when (not (file-exists-p result-dir))
         (make-directory result-dir t))
       (forward-line)
@@ -376,7 +419,7 @@
           (kill-whole-line 0)
         (progn (beginning-of-line) (open-line 1)))
       (insert  (make-string space-count ?\s))
-      (chatu-insert-image result))))
+      (chatu-insert-image result dir-method))))
 
 ;;;###autoload
 (defun chatu-open ()
