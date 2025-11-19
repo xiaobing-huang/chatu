@@ -11,7 +11,7 @@ See examples in [chatu.org](./chatu.org) and [chatu.md](./chatu.md).
 
 Before using `chatu`, you may need to install some external programs and
 set them in your PATH:
-- draw.io and pdf2svg for drawio file conversion
+- draw.io and inkscape (or pdf2svg) for drawio file conversion
 - plantuml.jar, java for plantuml
 - texlive for latex
 - clojure for .clj script
@@ -20,6 +20,11 @@ set them in your PATH:
 - curl for downloading file from web
 - R for statistic plotting
 - lilypond for music notes
+
+**Note on SVG conversion:** By default, chatu uses `inkscape` for converting
+drawio files to SVG (via PDF intermediate), which provides better quality and
+preserves all elements. If you prefer the legacy `pdf2svg` tool, you can
+configure it (see Draw.io Configuration below).
 
 Add `chatu.el` from melpa with use-package:
 
@@ -52,6 +57,32 @@ with homebrew, `draw.io` executable is located in following path:
 ```shell
 export PATH=/opt/homebrew/Caskroom/drawio/24.2.5/draw.io.app/Contents/MacOS:$PATH
 ```
+
+### Draw.io Configuration
+
+By default, chatu uses `inkscape` for PDF to SVG conversion, which provides
+better quality and preserves all graphical elements. You can customize this
+behavior:
+
+```emacs-lisp
+;; Use inkscape (default, recommended for best quality)
+(setq chatu-drawio-svg-converter 'inkscape)
+
+;; Or use pdf2svg (legacy, faster but may have rendering issues)
+(setq chatu-drawio-svg-converter 'pdf2svg)
+
+;; Customize inkscape path if not in PATH
+(setq chatu-drawio-inkscape-path "/usr/local/bin/inkscape")
+```
+
+**Why inkscape?** The direct SVG export from draw.io may miss some elements
+during rendering. Converting through PDF → SVG with inkscape ensures all
+shapes, text, and styling are preserved correctly.
+
+**Installing inkscape:**
+- macOS: `brew install inkscape`
+- Ubuntu/Debian: `sudo apt-get install inkscape`
+- Windows: Download from https://inkscape.org/release/
 
 ## plantuml
 

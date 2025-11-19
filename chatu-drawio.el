@@ -42,6 +42,21 @@
   :group 'chatu
   :type 'string)
 
+(defcustom chatu-drawio-svg-converter 'inkscape
+  "The tool to use for converting PDF to SVG.
+Supported values:
+  \\='inkscape - Use inkscape for better SVG quality (recommended)
+  \\='pdf2svg  - Use pdf2svg for faster conversion"
+  :group 'chatu
+  :type '(choice (const :tag "Inkscape (recommended)" inkscape)
+          (const :tag "pdf2svg" pdf2svg)))
+
+(defcustom chatu-drawio-inkscape-path "inkscape"
+  "Path to the inkscape executable.
+Default is \"inkscape\" which assumes it is in PATH."
+  :group 'chatu
+  :type 'string)
+
 (defun chatu-drawio--find-executable ()
   "Find the drawio executable on PATH, or else return an error."
   (condition-case nil
@@ -52,6 +67,23 @@
                          (executable-find "drawio")))
     (wrong-type-argument
      (message "Cannot find the draw.io executable on the PATH."))))
+
+(defun chatu-drawio--get-pdf-to-svg-command (pdf-path svg-path)
+  "Generate the command to convert PDF-PATH to SVG-PATH.
+Uses the converter specified by `chatu-drawio-svg-converter'."
+  (pcase chatu-drawio-svg-converter
+    ('inkscape
+     (format "%s %s --export-type=svg --export-filename=%s --export-area-drawing --export-margin 20"
+             (shell-quote-argument chatu-drawio-inkscape-path)
+             (shell-quote-argument pdf-path)
+             (shell-quote-argument svg-path)))
+    ('pdf2svg
+     (format "pdf2svg %s %s"
+             (shell-quote-argument pdf-path)
+             (shell-quote-argument svg-path)))
+    (_
+     (error "Unknown SVG converter: %s. Use 'inkscape or 'pdf2svg"
+            chatu-drawio-svg-converter))))
 
 (defun chatu-drawio-script (keyword-plist)
   "Get conversion script.
@@ -72,31 +104,22 @@ KEYWORD-PLIST contains parameters from the chatu line."
                (shell-command-to-string
                 (format "wslpath -aw '%s'" (file-truename input-path))))
             input-path)))
-    (if output-ext
-        (format "%s %s -f %s -x %s -p %s -o %s"
+    (if (string= output-ext "svg")
+        (format "%s %s -x %s -p %s -o %s && %s && rm %s"
                 drawio-path
-                (if (plist-get keyword-plist :crop) "--crop" "")
-                (shell-quote-argument output-ext)
-                (shell-quote-argument input-path)
-                (or page "0")
-                (shell-quote-argument (file-name-with-extension output-path output-ext)))
-      (if (plist-get keyword-plist :nopdf)
-          (format "%s %s -x %s -p %s -o %s"
-                  drawio-path
-                  (if (plist-get keyword-plist :crop) "--crop" "")
-                  (shell-quote-argument input-path)
-                  (or page "0")
-                  (shell-quote-argument output-path))
-        (format "%s %s -x %s -p %s -o %s && %s %s %s && rm %s"
-                drawio-path
-                (if (plist-get keyword-plist :crop) "--crop" "")
+                (if (plist-get keyword-plist :nocrop)  "" "--crop")
                 (shell-quote-argument input-path)
                 (or page "0")
                 (shell-quote-argument output-path-pdf)
-                "pdf2svg"
-                (shell-quote-argument output-path-pdf)
-                (shell-quote-argument output-path)
-                (shell-quote-argument output-path-pdf))))))
+                (chatu-drawio--get-pdf-to-svg-command output-path-pdf output-path)
+                (shell-quote-argument output-path-pdf))
+      (format "%s %s -f %s -x %s -p %s -o %s"
+              drawio-path
+              (if (plist-get keyword-plist :nocrop) "" "--crop")
+              (shell-quote-argument output-ext)
+              (shell-quote-argument input-path)
+              (or page "0")
+              (shell-quote-argument (file-name-with-extension output-path output-ext))))))
 
 
 (defun chatu-drawio-open (keyword-plist)
